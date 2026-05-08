@@ -8,7 +8,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎬 视频下载器 (基于 yt-dlp)</h1>
+        <h1>🎬 视频下载器</h1>
 
         <div class="panel">
             <div class="form-group">
@@ -16,13 +16,6 @@
                 <div class="input-group">
                     <input type="text" id="url" placeholder="请输入视频链接 (支持 YouTube、VK 等)...">
                     <button id="fetchBtn" onclick="fetchInfo()">获取视频列表</button>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="saveDir">保存目录:</label>
-                <div class="input-group">
-                    <input type="text" id="saveDir" value="c:/downloads">
                 </div>
             </div>
         </div>
@@ -66,13 +59,7 @@
                 ⬇️ 下载选中的视频
             </button>
 
-            <div class="progress-area">
-                <div class="progress-info">
-                    <span id="progressPercent">0%</span>
-                </div>
-                <div class="progress-bar">
-                    <div id="progressFill" class="progress-fill"></div>
-                </div>
+            <div class="status-area">
                 <div id="statusText" class="status-text">就绪</div>
             </div>
         </div>
