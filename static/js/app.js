@@ -1,6 +1,5 @@
 let videoEntries = [];
 let isFetching = false;
-let isDownloading = false;
 let isScanning = false;
 
 function fetchInfo() {
@@ -15,6 +14,7 @@ function fetchInfo() {
     isFetching = true;
     document.getElementById('fetchBtn').disabled = true;
     document.getElementById('statusText').textContent = '正在获取视频信息，请稍候...';
+    document.getElementById('statusText').style.color = '';
     document.getElementById('videoList').innerHTML = `
         <tr class="empty-row">
             <td colspan="3" style="text-align: center; color: #999; padding: 40px;">
@@ -165,7 +165,6 @@ function listenScanProgress() {
                 const cell = document.getElementById(`title-${data.index}`);
                 if (cell) {
                     cell.textContent = truncateTitle(data.title);
-                    // 添加高亮效果
                     cell.style.background = '#fff3cd';
                     setTimeout(() => {
                         cell.style.background = '';
@@ -192,8 +191,6 @@ function listenScanProgress() {
 }
 
 function startDownload() {
-    if (isDownloading) return;
-
     const checks = document.querySelectorAll('.video-check:checked');
     const indices = Array.from(checks).map(c => parseInt(c.dataset.index));
 
@@ -202,92 +199,49 @@ function startDownload() {
         return;
     }
 
-    const saveDir = document.getElementById('saveDir').value.trim();
-    if (!saveDir) {
-        alert('请输入保存目录');
-        return;
-    }
+    const statusText = document.getElementById('statusText');
+    const downloadBtn = document.getElementById('downloadBtn');
 
-    const items = indices.map(i => videoEntries[i]);
+    downloadBtn.disabled = true;
+    downloadBtn.textContent = '⬇️ 下载中...';
+    statusText.textContent = `正在准备下载 ${indices.length} 个视频，请查看浏览器下载栏...`;
+    statusText.style.color = '#667eea';
 
-    isDownloading = true;
-    document.getElementById('downloadBtn').disabled = true;
-    document.getElementById('downloadBtn').textContent = '⬇️ 下载中...';
-    document.getElementById('statusText').textContent = '准备下载...';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressPercent').textContent = '0%';
+    // 逐个触发下载，间隔 1000ms 避免浏览器拦截弹窗，也减轻服务器压力
+    indices.forEach((idx, i) => {
+        const item = videoEntries[idx];
+        const url = item.webpage_url || item.url;
+        const title = item.title || 'video';
 
-    fetch('/api/download', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({items: items, save_dir: saveDir})
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            listenProgress();
-        } else {
-            isDownloading = false;
-            document.getElementById('downloadBtn').disabled = false;
-            document.getElementById('downloadBtn').textContent = '⬇️ 下载选中的视频';
-            alert(data.error);
-            document.getElementById('statusText').textContent = data.error;
-        }
-    })
-    .catch(err => {
-        isDownloading = false;
-        document.getElementById('downloadBtn').disabled = false;
-        document.getElementById('downloadBtn').textContent = '⬇️ 下载选中的视频';
-        alert('启动失败: ' + err.message);
+        setTimeout(() => {
+            const downloadUrl = `/api/download-file?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
+
+            // 使用 iframe 方式触发下载，避免弹窗拦截，同时保持页面不跳转
+            let iframe = document.getElementById(`download-iframe-${i}`);
+            if (!iframe) {
+                iframe = document.createElement('iframe');
+                iframe.id = `download-iframe-${i}`;
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+            }
+            iframe.src = downloadUrl;
+
+            statusText.textContent = `已触发第 ${i+1}/${indices.length} 个视频下载: ${truncateTitle(title)}`;
+        }, i * 1000);
     });
-}
 
-function listenProgress() {
-    const evtSource = new EventSource('/api/progress');
+    // 全部触发完成后恢复按钮状态
+    setTimeout(() => {
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = '⬇️ 下载选中的视频';
+        statusText.textContent = `全部 ${indices.length} 个视频已触发下载，请查看浏览器下载栏`;
+        statusText.style.color = '#27ae60';
 
-    evtSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-
-        if (data.status === 'heartbeat') return;
-
-        if (data.status === 'item_start' || data.status === 'downloading') {
-            document.getElementById('statusText').textContent = data.message;
-            const percentStr = (data.percent_str || '0%').replace('%', '');
-            const percent = parseFloat(percentStr) || 0;
-            document.getElementById('progressFill').style.width = percent + '%';
-            document.getElementById('progressPercent').textContent = Math.round(percent) + '%';
-        } else if (data.status === 'finished') {
-            document.getElementById('progressFill').style.width = '100%';
-            document.getElementById('progressPercent').textContent = '100%';
-            document.getElementById('statusText').textContent = data.message;
-        } else if (data.status === 'error') {
-            document.getElementById('statusText').textContent = data.message;
-            document.getElementById('statusText').style.color = '#e74c3c';
-        } else if (data.status === 'complete') {
-            evtSource.close();
-            isDownloading = false;
-            document.getElementById('downloadBtn').disabled = false;
-            document.getElementById('downloadBtn').textContent = '⬇️ 下载选中的视频';
-            document.getElementById('progressFill').style.width = '100%';
-            document.getElementById('progressPercent').textContent = '100%';
-            document.getElementById('statusText').textContent = data.message;
-            document.getElementById('statusText').style.color = '#27ae60';
-
-            setTimeout(() => {
-                alert(`任务结束\n成功: ${data.success_count}\n总计: ${data.total}`);
-                document.getElementById('statusText').style.color = '';
-                document.getElementById('progressFill').style.width = '0%';
-                document.getElementById('progressPercent').textContent = '0%';
-            }, 500);
-        }
-    };
-
-    evtSource.onerror = () => {
-        evtSource.close();
-        isDownloading = false;
-        document.getElementById('downloadBtn').disabled = false;
-        document.getElementById('downloadBtn').textContent = '⬇️ 下载选中的视频';
-    };
+        // 清理临时 iframe
+        setTimeout(() => {
+            document.querySelectorAll('iframe[id^="download-iframe-"]').forEach(el => el.remove());
+        }, 30000);
+    }, indices.length * 1000 + 500);
 }
 
 function toggleSelectAll() {
