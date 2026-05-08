@@ -6,48 +6,21 @@ import random
 import html
 import threading
 import queue
+import tempfile
+import shutil
+import glob
 from urllib.parse import urljoin
 
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_file, after_this_request
 import yt_dlp
 import requests
 
 app = Flask(__name__)
 
-# 全局进度队列
-progress_queue = queue.Queue()
-# 深度扫描更新队列
+# 全局扫描更新队列（深度扫描用）
 scan_update_queue = queue.Queue()
-# 当前下载上下文（用于 progress_hook 获取当前视频信息）
-current_download = {'index': 0, 'total': 0, 'title': ''}
 
-
-def progress_hook(d):
-    """yt-dlp 下载进度回调"""
-    try:
-        percent_str = d.get('_percent_str', '0%')
-        # 确保 percent_str 是字符串
-        if not isinstance(percent_str, str):
-            percent_str = '0%'
-
-        data = {
-            'status': d.get('status'),
-            'percent_str': percent_str,
-            'speed_str': d.get('_speed_str', ''),
-            'eta_str': d.get('_eta_str', ''),
-            'filename': d.get('filename', ''),
-            'current': current_download.get('index', 0),
-            'total': current_download.get('total', 0),
-            'title': current_download.get('title', ''),
-        }
-        if d.get('status') == 'downloading':
-            data['message'] = f"正在下载 ({data['current']}/{data['total']}): {data['title']} - {data['percent_str']}"
-        elif d.get('status') == 'finished':
-            data['message'] = f"完成 ({data['current']}/{data['total']}): {data['title']}"
-            data['percent_str'] = '100%'
-        progress_queue.put(data)
-    except Exception as e:
-        print(f"progress_hook error: {e}")
+VIDEO_EXTS = ('.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp')
 
 
 def is_valid_title(title, url=None):
@@ -307,107 +280,69 @@ def scan_progress():
     return Response(event_stream(), mimetype='text/event-stream')
 
 
-@app.route('/api/download', methods=['POST'])
-def download():
-    items = request.json.get('items', [])
-    save_dir = request.json.get('save_dir', '')
+@app.route('/api/download-file')
+def download_file():
+    """下载单个视频到服务器临时目录，然后直接作为文件流返回给浏览器，请求结束后自动清理"""
+    url = request.args.get('url')
+    title = request.args.get('title', 'video')
 
-    if not items:
-        return jsonify({'success': False, 'error': '未选择视频'})
+    if not url:
+        return jsonify({'success': False, 'error': '缺少视频链接'}), 400
 
-    if not save_dir:
-        return jsonify({'success': False, 'error': '请输入保存目录'})
+    # 创建临时目录
+    tmp_dir = tempfile.mkdtemp()
 
-    if not os.path.exists(save_dir):
+    @after_this_request
+    def cleanup(response):
+        """请求结束后删除临时文件和目录"""
         try:
-            os.makedirs(save_dir)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception as e:
-            return jsonify({'success': False, 'error': f'无法创建目录: {e}'})
+            print(f"Cleanup error: {e}")
+        return response
 
-    # 清空之前的进度
-    while not progress_queue.empty():
-        try:
-            progress_queue.get_nowait()
-        except:
-            break
+    try:
+        # 使用 yt-dlp 下载到临时目录
+        ydl_opts = {
+            'outtmpl': os.path.join(tmp_dir, '%(title)s.%(ext)s'),
+            'format': 'best',
+            'quiet': True,
+            'ignoreerrors': True,
+        }
 
-    thread = threading.Thread(target=download_thread, args=(items, save_dir), daemon=True)
-    thread.start()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info:
+                return jsonify({'success': False, 'error': '无法获取视频信息'}), 500
 
-    return jsonify({'success': True, 'message': '下载已启动'})
+            # 找到下载的实际视频文件（过滤掉缩略图、字幕等非视频文件）
+            files = [f for f in glob.glob(os.path.join(tmp_dir, '*'))
+                     if os.path.splitext(f)[1].lower() in VIDEO_EXTS]
 
+            if not files:
+                # 如果没有匹配到视频扩展名，尝试取目录中最大的文件
+                all_files = [f for f in glob.glob(os.path.join(tmp_dir, '*')) if os.path.isfile(f)]
+                if all_files:
+                    files = [max(all_files, key=os.path.getsize)]
 
-def download_thread(items, save_dir):
-    total = len(items)
-    success_count = 0
+            if not files:
+                return jsonify({'success': False, 'error': '下载失败，未找到文件'}), 500
 
-    progress_queue.put({
-        'status': 'started',
-        'total': total,
-        'message': '下载任务开始'
-    })
+            actual_file = files[0]
+            ext = os.path.splitext(actual_file)[1]
+            # 清理文件名中的非法字符
+            safe_title = re.sub(r'[\\/:*?"<>|]', '_', title)
+            download_name = f"{safe_title}{ext}" if ext else f"{safe_title}.mp4"
 
-    ydl_opts = {
-        'outtmpl': f'{save_dir}/%(title)s.%(ext)s',
-        'format': 'best',
-        'quiet': True,
-        'ignoreerrors': True,
-        'progress_hooks': [progress_hook]
-    }
+            return send_file(
+                actual_file,
+                as_attachment=True,
+                download_name=download_name
+            )
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        for index, item in enumerate(items):
-            url = item.get('webpage_url', item.get('url'))
-            title = item.get('title', 'Unknown')
-
-            current_download['index'] = index + 1
-            current_download['total'] = total
-            current_download['title'] = title
-
-            progress_queue.put({
-                'status': 'item_start',
-                'current': index + 1,
-                'total': total,
-                'title': title,
-                'percent_str': '0%',
-                'message': f'开始下载 ({index+1}/{total}): {title}'
-            })
-
-            try:
-                ydl.download([url])
-                success_count += 1
-            except Exception as e:
-                print(f"Error downloading {title}: {e}")
-                progress_queue.put({
-                    'status': 'error',
-                    'current': index + 1,
-                    'total': total,
-                    'title': title,
-                    'message': f'下载失败 ({index+1}/{total}): {title} - {str(e)}'
-                })
-
-    progress_queue.put({
-        'status': 'complete',
-        'success_count': success_count,
-        'total': total,
-        'message': f'下载完成! 成功: {success_count}/{total}'
-    })
-
-
-@app.route('/api/progress')
-def progress():
-    def event_stream():
-        while True:
-            try:
-                data = progress_queue.get(timeout=30)
-                yield f"data: {json.dumps(data)}\n\n"
-                if data.get('status') == 'complete':
-                    time.sleep(1)
-                    break
-            except queue.Empty:
-                yield f"data: {json.dumps({'status': 'heartbeat'})}\n\n"
-
-    return Response(event_stream(), mimetype='text/event-stream')
+    except Exception as e:
+        print(f"Download error: {e}")
+        return jsonify({'success': False, 'error': f'下载失败: {str(e)}'}), 500
 
 
 @app.route('/api/save-list', methods=['POST'])
@@ -447,7 +382,6 @@ def load_list():
             return jsonify({'success': False, 'error': '文件格式不正确：缺少 entries 字段'})
     except Exception as e:
         return jsonify({'success': False, 'error': f'打开失败: {e}'})
-
 
 
 if __name__ == '__main__':
