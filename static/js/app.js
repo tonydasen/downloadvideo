@@ -5,7 +5,8 @@ let isScanning = false;
 function fetchInfo() {
     if (isFetching) return;
 
-    const url = document.getElementById('url').value.trim();
+    const urlInput = document.getElementById('url');
+    const url = urlInput ? urlInput.value.trim() : '';
     if (!url) {
         alert('请输入视频链接');
         return;
@@ -204,78 +205,63 @@ function startDownload() {
 
     downloadBtn.disabled = true;
     downloadBtn.textContent = '⬇️ 下载中...';
-    statusText.textContent = `正在准备下载 ${indices.length} 个视频...`;
+    statusText.textContent = `正在准备下载 ${indices.length} 个视频，请稍候...`;
     statusText.style.color = '#667eea';
 
-    // 使用多种方式触发下载，提高兼容性
+    // 逐个触发下载，间隔 2 秒
     indices.forEach((idx, i) => {
         const item = videoEntries[idx];
         const url = item.webpage_url || item.url;
         const title = item.title || 'video';
         const downloadUrl = `/api/download-file?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
 
-        if (i === 0) {
-            // 第一个下载：使用 form 提交（最可靠，不会被浏览器拦截）
-            triggerDownloadViaForm(downloadUrl);
-            statusText.textContent = `已触发第 1/${indices.length} 个视频下载: ${truncateTitle(title)}`;
-        } else {
-            // 后续下载：间隔 2 秒，使用 iframe
-            setTimeout(() => {
-                triggerDownloadViaIframe(downloadUrl);
-                statusText.textContent = `已触发第 ${i+1}/${indices.length} 个视频下载: ${truncateTitle(title)}`;
-            }, i * 2000);
-        }
+        setTimeout(() => {
+            statusText.textContent = `正在下载第 ${i+1}/${indices.length} 个: ${truncateTitle(title)}...`;
+
+            // 使用 fetch 先检查是否成功，再触发下载
+            fetch(downloadUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(errData => {
+                            throw new Error(errData.error || `HTTP ${response.status}`);
+                        }).catch(() => {
+                            throw new Error(`下载失败: HTTP ${response.status}`);
+                        });
+                    }
+                    // 成功，获取 blob 并触发下载
+                    return response.blob();
+                })
+                .then(blob => {
+                    const blobUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    // 从响应头获取文件名，或构造一个
+                    const ext = '.mp4';
+                    const safeTitle = title.replace(/[\\/:*?"<>|]/g, '_');
+                    a.download = `${safeTitle}${ext}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+
+                    statusText.textContent = `第 ${i+1}/${indices.length} 个下载完成: ${truncateTitle(title)}`;
+                })
+                .catch(err => {
+                    console.error('Download error:', err);
+                    statusText.textContent = `第 ${i+1} 个下载失败: ${err.message}`;
+                    statusText.style.color = '#e74c3c';
+                });
+
+        }, i * 2500);
     });
 
-    // 全部触发完成后恢复按钮状态
+    // 全部完成后恢复按钮
     setTimeout(() => {
         downloadBtn.disabled = false;
         downloadBtn.textContent = '⬇️ 下载选中的视频';
-        statusText.textContent = `全部 ${indices.length} 个视频已触发下载，请查看浏览器下载栏（如被拦截请允许）`;
+        statusText.textContent = `全部 ${indices.length} 个视频处理完毕，请查看浏览器下载栏`;
         statusText.style.color = '#27ae60';
-    }, indices.length * 2000 + 500);
-}
-
-/**
- * 使用隐藏的 form 提交触发下载（最可靠，不会被浏览器拦截弹窗）
- */
-function triggerDownloadViaForm(url) {
-    // 移除旧的 form（如果有）
-    const oldForm = document.getElementById('download-form');
-    if (oldForm) oldForm.remove();
-
-    const form = document.createElement('form');
-    form.id = 'download-form';
-    form.method = 'GET';
-    form.action = url;
-    form.target = '_blank';  // 在新窗口/标签页打开，浏览器会处理为下载
-    form.style.display = 'none';
-    document.body.appendChild(form);
-    form.submit();
-
-    // 提交后延迟移除 form
-    setTimeout(() => {
-        const f = document.getElementById('download-form');
-        if (f) f.remove();
-    }, 5000);
-}
-
-/**
- * 使用 iframe 触发下载（备用方案）
- */
-function triggerDownloadViaIframe(url) {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-    iframe.src = url;
-
-    // 30 秒后清理 iframe
-    setTimeout(() => {
-        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-    }, 30000);
+    }, indices.length * 2500 + 1000);
 }
 
 function toggleSelectAll() {
@@ -289,8 +275,9 @@ function saveList() {
         return;
     }
 
+    const urlInput = document.getElementById('url');
     const data = {
-        source_url: document.getElementById('url').value,
+        source_url: urlInput ? urlInput.value : '',
         entries: videoEntries
     };
 
@@ -336,7 +323,8 @@ function loadList() {
     .then(data => {
         if (data.success) {
             if (data.data.source_url) {
-                document.getElementById('url').value = data.data.source_url;
+                const urlInput = document.getElementById('url');
+                if (urlInput) urlInput.value = data.data.source_url;
             }
             updateListUI(data.data);
             document.getElementById('statusText').textContent = '已从本地文件载入列表';
