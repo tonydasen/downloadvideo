@@ -204,44 +204,78 @@ function startDownload() {
 
     downloadBtn.disabled = true;
     downloadBtn.textContent = '⬇️ 下载中...';
-    statusText.textContent = `正在准备下载 ${indices.length} 个视频，请查看浏览器下载栏...`;
+    statusText.textContent = `正在准备下载 ${indices.length} 个视频...`;
     statusText.style.color = '#667eea';
 
-    // 逐个触发下载，间隔 1000ms 避免浏览器拦截弹窗，也减轻服务器压力
+    // 使用多种方式触发下载，提高兼容性
     indices.forEach((idx, i) => {
         const item = videoEntries[idx];
         const url = item.webpage_url || item.url;
         const title = item.title || 'video';
+        const downloadUrl = `/api/download-file?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
 
-        setTimeout(() => {
-            const downloadUrl = `/api/download-file?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
-
-            // 使用 iframe 方式触发下载，避免弹窗拦截，同时保持页面不跳转
-            let iframe = document.getElementById(`download-iframe-${i}`);
-            if (!iframe) {
-                iframe = document.createElement('iframe');
-                iframe.id = `download-iframe-${i}`;
-                iframe.style.display = 'none';
-                document.body.appendChild(iframe);
-            }
-            iframe.src = downloadUrl;
-
-            statusText.textContent = `已触发第 ${i+1}/${indices.length} 个视频下载: ${truncateTitle(title)}`;
-        }, i * 1000);
+        if (i === 0) {
+            // 第一个下载：使用 form 提交（最可靠，不会被浏览器拦截）
+            triggerDownloadViaForm(downloadUrl);
+            statusText.textContent = `已触发第 1/${indices.length} 个视频下载: ${truncateTitle(title)}`;
+        } else {
+            // 后续下载：间隔 2 秒，使用 iframe
+            setTimeout(() => {
+                triggerDownloadViaIframe(downloadUrl);
+                statusText.textContent = `已触发第 ${i+1}/${indices.length} 个视频下载: ${truncateTitle(title)}`;
+            }, i * 2000);
+        }
     });
 
     // 全部触发完成后恢复按钮状态
     setTimeout(() => {
         downloadBtn.disabled = false;
         downloadBtn.textContent = '⬇️ 下载选中的视频';
-        statusText.textContent = `全部 ${indices.length} 个视频已触发下载，请查看浏览器下载栏`;
+        statusText.textContent = `全部 ${indices.length} 个视频已触发下载，请查看浏览器下载栏（如被拦截请允许）`;
         statusText.style.color = '#27ae60';
+    }, indices.length * 2000 + 500);
+}
 
-        // 清理临时 iframe
-        setTimeout(() => {
-            document.querySelectorAll('iframe[id^="download-iframe-"]').forEach(el => el.remove());
-        }, 30000);
-    }, indices.length * 1000 + 500);
+/**
+ * 使用隐藏的 form 提交触发下载（最可靠，不会被浏览器拦截弹窗）
+ */
+function triggerDownloadViaForm(url) {
+    // 移除旧的 form（如果有）
+    const oldForm = document.getElementById('download-form');
+    if (oldForm) oldForm.remove();
+
+    const form = document.createElement('form');
+    form.id = 'download-form';
+    form.method = 'GET';
+    form.action = url;
+    form.target = '_blank';  // 在新窗口/标签页打开，浏览器会处理为下载
+    form.style.display = 'none';
+    document.body.appendChild(form);
+    form.submit();
+
+    // 提交后延迟移除 form
+    setTimeout(() => {
+        const f = document.getElementById('download-form');
+        if (f) f.remove();
+    }, 5000);
+}
+
+/**
+ * 使用 iframe 触发下载（备用方案）
+ */
+function triggerDownloadViaIframe(url) {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    iframe.src = url;
+
+    // 30 秒后清理 iframe
+    setTimeout(() => {
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    }, 30000);
 }
 
 function toggleSelectAll() {
