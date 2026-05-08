@@ -1,1 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频下载器 (Web版)</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 视频下载器 (基于 yt-dlp)</h1>
 
+        <div class="panel">
+            <div class="form-group">
+                <label for="url">视频链接:</label>
+                <div class="input-group">
+                    <input type="text" id="url" placeholder="请输入视频链接 (支持 YouTube、VK 等)...">
+                    <button id="fetchBtn" onclick="fetchInfo()">获取视频列表</button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="saveDir">保存目录:</label>
+                <div class="input-group">
+                    <input type="text" id="saveDir" value="D:/AI创作/videos/二战全彩实录">
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="list-header">
+                <h3>视频列表 <span id="listCount" class="badge">0</span></h3>
+                <div class="list-actions-top">
+                    <button id="deepScanBtn" onclick="startDeepScan()" style="display:none;">🔧 修复标题</button>
+                </div>
+            </div>
+            <div class="list-container">
+                <table id="videoTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+                            <th>标题</th>
+                            <th style="width: 250px;">链接</th>
+                        </tr>
+                    </thead>
+                    <tbody id="videoList">
+                        <tr class="empty-row">
+                            <td colspan="3" style="text-align: center; color: #999; padding: 40px;">
+                                暂无视频，请先获取视频列表
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="list-actions">
+                <button onclick="saveList()" class="btn-secondary">💾 导出列表</button>
+                <label class="file-label btn-secondary">
+                    📂 导入列表
+                    <input type="file" id="loadFile" accept=".json" onchange="loadList()" style="display:none;">
+                </label>
+            </div>
+        </div>
+
+        <div class="panel">
+            <button id="downloadBtn" class="btn-primary" onclick="startDownload()" disabled>
+                ⬇️ 下载选中的视频
+            </button>
+
+            <div class="progress-area">
+                <div class="progress-info">
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div id="statusText" class="status-text">就绪</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
